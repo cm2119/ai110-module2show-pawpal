@@ -1,15 +1,41 @@
+%% ---------------------------------------------------------------------------
+%% PawPal+ system design
+%% Owner has Pets, each Pet has Tasks, each Task has one or more Schedules.
+%% ---------------------------------------------------------------------------
+
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
-
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +String name
+        +List~Pet~ pets
+        +addPet(Pet pet) void
+        +removePet(Pet pet) void
+        +getAllTasks() List~Task~
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +String name
+        +float weight
+        +List~Task~ tasks
+        +editInfo(String name, float weight) void
+        +addTask(Task task) void
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +String name
+        +String type
+        +Pet pet
+        +bool completed
+        +List~Schedule~ schedules
+        +addSchedule(Schedule schedule) void
+        +markComplete(bool completed) void
+    }
+
+    class Schedule {
+        +Task task
+        +Time timeOfDay
+        +String recurrence
+    }
+
+    Owner "1" --> "*" Pet : has
+    Pet "1" --> "*" Task : assigned
+    Task "1" --> "*" Schedule : scheduled at

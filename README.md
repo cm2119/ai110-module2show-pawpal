@@ -24,6 +24,8 @@ Your final app should:
 
 ## Getting started
 
+
+
 ### Setup
 
 ```bash
@@ -45,8 +47,16 @@ pip install -r requirements.txt
 ## 🖥️ Sample Output
 
 Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+#My example first draft:
+Owner: Cristina
+  Pet: Bella (12.5 kg)
+    Task: Morning walk [daily] at 07:30
+    Task: Evening feeding [daily] at 18:00
+  Pet: Milo (4.2 kg)
+    Task: Litter box change [weekly] at 12:15
 
-```
+
+```Ideal output:
 # e.g.:
 # Daily plan for Biscuit (Golden Retriever):
 #   08:00 — Morning walk (30 min) [priority: high]
