@@ -65,11 +65,13 @@ Owner: Cristina
 ```
 
 ## 🧪 Testing PawPal+
+My tests include verifying tasks for today are shown in chronological order, testing back-to-back scheduling works, testing whether a warning is given if a duration of a previous task overlaps with a new one. As well as testing that one off tasks are allowed besides (daily, weekly) tasks.
 
+My confidence level is 3 out of 5 stars regarding system reliability. I noted trade offs that AI warned about what is out of scope for the system like midnight scheduling overlapping between a previous and next day (not showing up on next day). I believe it addresses basic needs and functionality.
 ```bash
 # Run the full test suite:
 pytest
-
+================================================================= 25 passed in 0.21s =================================================================
 # Run with coverage:
 pytest --cov
 ```
@@ -78,6 +80,18 @@ Sample test output:
 
 ```
 # Paste your pytest output here
+
+(.venv) PS C:\Users\crist\OneDrive\AI Course 2026\ai110-module2show-pawpal> python -m pytest
+================================================================ test session starts =================================================================
+platform win32 -- Python 3.13.13, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\crist\OneDrive\AI Course 2026\ai110-module2show-pawpal
+collected 25 items                                                                                                                                    
+
+tests\test_pawpal.py .........................                                                                                                  [100%]
+
+================================================================= 25 passed in 0.10s =================================================================
+
+
 ```
 
 ## 📐 Smarter Scheduling

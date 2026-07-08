@@ -89,7 +89,7 @@ else:
         priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
     col_type, col_time = st.columns(2)
     with col_type:
-        task_type = st.selectbox("Type", ["daily", "weekly", "monthly"])
+        task_type = st.selectbox("Type", ["daily", "weekly", "once"])
     with col_time:
         time_of_day = st.time_input("Time of day", value=time(8, 0))
 
@@ -148,13 +148,14 @@ all_occurrences = scheduler.sort_by_datetime()
 if not all_occurrences:
     st.info("No scheduled occurrences yet. Add a task with a time above.")
 else:
-    # Warn about clashing occurrences for today (two tasks at the same time).
+    # Warn about clashing occurrences for today (tasks whose time windows
+    # overlap, or that start at the same time).
     for message in scheduler.detect_conflicts(today):
         st.warning(message)
 
     # Today's checklist: per-occurrence completion for the current day.
     st.markdown(f"**Today — {today}**")
-    today_occurrences = [s for s in all_occurrences if s.due_date == today]
+    today_occurrences = scheduler.occurrences_for_day(today)
     if not today_occurrences:
         st.caption("Nothing scheduled for today.")
     for occ in today_occurrences:
