@@ -1,5 +1,10 @@
+from datetime import date, time, timedelta
+
 import streamlit as st
-from pawpal_system import Owner, Pet, Scheduler, Task
+from pawpal_system import Owner, Pet, Schedule, Scheduler, Task
+
+# How many days ahead to materialize the recurring calendar.
+SCHEDULE_HORIZON_DAYS = 7
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -7,12 +12,11 @@ st.title("🐾 PawPal+")
 
 st.markdown(
     """
-Welcome to the PawPal+ starter app.
+Welcome to **PawPal+**, a pet care planning assistant.
 
-This file is intentionally thin. It gives you a working Streamlit app so you can start quickly,
-but **it does not implement the project logic**. Your job is to design the system and build it.
-
-Use this app as your interactive demo once your backend classes/functions exist.
+Add your pets and their care tasks below. Each task has a time of day and a
+recurrence (daily/weekly); PawPal+ generates the upcoming calendar and lets you
+check off today's tasks.
 """
 )
 
@@ -83,19 +87,30 @@ else:
         duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
     with col3:
         priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
-    task_type = st.selectbox("Type", ["daily", "weekly", "monthly"])
+    col_type, col_time = st.columns(2)
+    with col_type:
+        task_type = st.selectbox("Type", ["daily", "weekly", "monthly"])
+    with col_time:
+        time_of_day = st.time_input("Time of day", value=time(8, 0))
 
     if st.button("Add task"):
-        selected_pet.add_task(
-            Task(
-                name=task_title,
-                type=task_type,
-                pet=selected_pet,
-                duration_minutes=int(duration),
-                priority=priority,
-            )
+        task = Task(
+            name=task_title,
+            type=task_type,
+            pet=selected_pet,
+            duration_minutes=int(duration),
+            priority=priority,
         )
-        st.success(f"Added '{task_title}' to {selected_pet.name}.")
+        # Seed a first occurrence (due today); generate_occurrences() extends it
+        # forward for daily/weekly tasks. recurrence mirrors the task type.
+        task.add_schedule(
+            Schedule(task=task, time_of_day=time_of_day, recurrence=task_type)
+        )
+        selected_pet.add_task(task)
+        st.success(
+            f"Added '{task_title}' at {time_of_day.strftime('%H:%M')} "
+            f"to {selected_pet.name}."
+        )
 
     all_tasks = owner.get_all_tasks()
     if all_tasks:
@@ -108,7 +123,7 @@ else:
                     "type": task.type,
                     "duration_minutes": task.duration_minutes,
                     "priority": task.priority,
-                    "completed": task.completed,
+                    "completed": task.is_done,
                 }
                 for task in all_tasks
             ]
@@ -118,19 +133,63 @@ else:
 
 st.divider()
 
-st.subheader("Build Schedule")
-st.caption("This button should call your scheduling logic once you implement it.")
+st.subheader("Schedule")
 
-if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
+scheduler = Scheduler(owner=owner)
+today = date.today()
+horizon = today + timedelta(days=SCHEDULE_HORIZON_DAYS)
+
+# Materialize the recurring calendar up front. This is idempotent and runs on
+# every rerun, so the schedule stays filled to the horizon regardless of what
+# has been completed — a skipped day still shows a due occurrence.
+scheduler.generate_occurrences(horizon)
+
+all_occurrences = scheduler.sort_by_datetime()
+if not all_occurrences:
+    st.info("No scheduled occurrences yet. Add a task with a time above.")
+else:
+    # Warn about clashing occurrences for today (two tasks at the same time).
+    for message in scheduler.detect_conflicts(today):
+        st.warning(message)
+
+    # Today's checklist: per-occurrence completion for the current day.
+    st.markdown(f"**Today — {today}**")
+    today_occurrences = [s for s in all_occurrences if s.due_date == today]
+    if not today_occurrences:
+        st.caption("Nothing scheduled for today.")
+    for occ in today_occurrences:
+        label = (
+            f"{occ.time_of_day.strftime('%H:%M')} — "
+            f"{occ.task.pet.name}: {occ.task.name}"
+        )
+        # Key by object identity: unique per occurrence and stable across
+        # reruns (occurrences persist in session_state), so two same-name tasks
+        # at the same time — exactly the conflict case — don't collide.
+        key = f"done::{id(occ)}"
+        done = st.checkbox(label, value=occ.completed, key=key)
+        scheduler.mark_done(occ, done)
+
+    pending_today = scheduler.get_pending_tasks(today)
+    st.caption(
+        f"{len(pending_today)} task(s) still pending today."
+        if pending_today
+        else "All of today's tasks are done. 🎉"
     )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
+
+    # Upcoming timeline through the horizon (read-only). all_occurrences is
+    # already in (date, time) order from sort_by_datetime(), so just window it.
+    st.markdown(f"**Upcoming — through {horizon}**")
+    upcoming = [s for s in all_occurrences if today <= s.due_date <= horizon]
+    st.table(
+        [
+            {
+                "date": s.due_date.isoformat(),
+                "time": s.time_of_day.strftime("%H:%M"),
+                "pet": s.task.pet.name,
+                "task": s.task.name,
+                "recurrence": s.recurrence,
+                "done": s.completed,
+            }
+            for s in upcoming
+        ]
     )

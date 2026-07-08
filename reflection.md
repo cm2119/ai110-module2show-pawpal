@@ -40,13 +40,17 @@ I had to edit the placement of certain responsibilities and remove extra functio
 **a. Constraints and priorities**
 
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
-
+My scheduler considers date and time for each task by detecting conflicts if tasks overlap in date and time. It prioritzes tasks by time if given. 
 - How did you decide which constraints mattered most?
+I noticed my code 
 
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+For task conflict detection, I made a tradeoff by swapping from three overlapping ideas to a single grouping logic to improve human readibility that allows for identifying whether tasks have the same date and time to produce a warning. This warning considers printing a single readable warning line instead of multiple for each time there is a conflict.
+
 - Why is that tradeoff reasonable for this scenario?
+It is reasonable because I didn't follow through in a reasonable manner with the initial overlapping ideas for sorting provided by AI. So, this refactoring was helpful because I felt more confident about the code and for anyone else to follow through by prioritizing readibility and even acknowledging that the logic relies on sorting by date and time first before identifying tasks that conflict with each other.
 
 ---
 
