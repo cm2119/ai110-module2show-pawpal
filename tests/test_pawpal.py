@@ -233,6 +233,35 @@ def test_add_task_increases_pet_task_count():
     assert len(pet.tasks) == 1
 
 
+def test_remove_task_drops_task_and_its_occurrences():
+    """Task Removal: removing a task takes its schedules off the calendar."""
+    owner = Owner(name="Jordan")
+    pet = Pet(name="Milo", weight=4.2)
+    owner.add_pet(pet)
+
+    task = Task(name="Feeding", type="daily", pet=pet)
+    task.add_schedule(Schedule(task=task, time_of_day=Time(7, 30), recurrence="daily"))
+    pet.add_task(task)
+
+    scheduler = Scheduler(owner=owner)
+    assert scheduler.get_all_tasks() == [task]
+
+    pet.remove_task(task)
+
+    assert pet.tasks == []
+    assert scheduler.get_all_tasks() == []
+
+
+def test_remove_task_ignores_task_not_on_pet():
+    """Removing a task the pet never had is a no-op, like Owner.remove_pet."""
+    pet = Pet(name="Milo", weight=4.2)
+    stray = Task(name="Walk", type="daily", pet=pet)
+
+    pet.remove_task(stray)  # never added — must not raise
+
+    assert pet.tasks == []
+
+
 # --- Recurrence validation (#1): "monthly" is rejected outright ---------------
 
 

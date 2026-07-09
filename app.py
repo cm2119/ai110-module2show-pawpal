@@ -66,6 +66,56 @@ if owner.pets:
         if pet.breed:
             label += f" — {pet.breed}"
         st.write(label)
+
+    # Manage pets: edit a pet's info in place or remove it entirely. Both wire
+    # straight to the backend (Pet.edit_info / Owner.remove_pet); a rerun then
+    # refreshes every downstream read — the tasks table and the scheduler all
+    # walk owner.pets, so the change propagates on its own.
+    with st.expander("Manage pets"):
+        manage_name = st.selectbox(
+            "Select a pet to manage",
+            [pet.name for pet in owner.pets],
+            key="manage_pet",
+        )
+        managed_pet = next(pet for pet in owner.pets if pet.name == manage_name)
+
+        # Edit form: fields are pre-filled from the selected pet. They carry no
+        # widget key, so picking a different pet re-seeds them from that pet's
+        # current values on the next rerun.
+        with st.form("edit_pet_form"):
+            new_name = st.text_input("Name", value=managed_pet.name)
+            new_weight = st.number_input(
+                "Weight (kg)",
+                min_value=0.1,
+                max_value=200.0,
+                value=float(managed_pet.weight),
+            )
+            new_breed = st.text_input("Breed", value=managed_pet.breed)
+            if st.form_submit_button("Save changes"):
+                managed_pet.edit_info(
+                    name=new_name, weight=float(new_weight), breed=new_breed
+                )
+                # A rename means the old name is no longer a valid selectbox
+                # option; drop the stored value so Streamlit doesn't try to
+                # restore it and error out.
+                st.session_state.pop("manage_pet", None)
+                st.success(f"Updated {new_name}.")
+                st.rerun()
+
+        # Removing a pet also drops its tasks (they live on the pet), so gate it
+        # behind a confirm checkbox — a stray click shouldn't wipe a pet and its
+        # whole care plan.
+        confirm_remove = st.checkbox(
+            f"Confirm removal of {managed_pet.name}", key="confirm_remove"
+        )
+        if st.button("Remove pet", disabled=not confirm_remove):
+            owner.remove_pet(managed_pet)
+            # Clear widget state tied to the now-gone pet so the selectbox and
+            # checkbox don't try to restore values that are no longer valid.
+            st.session_state.pop("manage_pet", None)
+            st.session_state.pop("confirm_remove", None)
+            st.success(f"Removed {manage_name} from {owner.name}'s pets.")
+            st.rerun()
 else:
     st.info("No pets yet. Add one above.")
 
@@ -143,6 +193,32 @@ else:
                 for task in all_tasks
             ]
         )
+
+        # Remove a task: wires straight to Pet.remove_task. Options are indexes
+        # into all_tasks (not names) so two same-named tasks stay distinct, and
+        # a format_func renders a readable label for each. Removing a task drops
+        # its schedules too, so it leaves the calendar on the next rerun.
+        with st.expander("Remove a task"):
+            def task_label(i: int) -> str:
+                t = all_tasks[i]
+                return f"{t.pet.name}: {t.name} ({t.type}, {t.priority})"
+
+            remove_idx = st.selectbox(
+                "Select a task to remove",
+                range(len(all_tasks)),
+                format_func=task_label,
+                key="remove_task_idx",
+            )
+            task_to_remove = all_tasks[remove_idx]
+            if st.button("Remove task"):
+                task_to_remove.pet.remove_task(task_to_remove)
+                # The index may now be out of range; drop it so the selectbox
+                # re-initializes cleanly against the shorter list.
+                st.session_state.pop("remove_task_idx", None)
+                st.success(
+                    f"Removed '{task_to_remove.name}' from {task_to_remove.pet.name}."
+                )
+                st.rerun()
     else:
         st.info("No tasks yet. Add one above.")
 

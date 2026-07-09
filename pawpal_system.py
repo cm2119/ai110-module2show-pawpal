@@ -146,6 +146,16 @@ class Pet:
         """Add a task to this pet's task list."""
         self.tasks.append(task)
 
+    def remove_task(self, task: Task) -> None:
+        """Remove a task from this pet if present (matched by identity).
+
+        Dropping the task takes its schedules with it, so the task's
+        occurrences leave the calendar on the next scheduler read. Absent tasks
+        are ignored, mirroring Owner.remove_pet.
+        """
+        if task in self.tasks:
+            self.tasks.remove(task)
+
 
 @dataclass
 class Owner:
