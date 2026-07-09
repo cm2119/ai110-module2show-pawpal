@@ -1,0 +1,80 @@
+%% ---------------------------------------------------------------------------
+%% PawPal+ system design (final)
+%% Owner has Pets, each Pet has Tasks, each Task has one or more Schedules.
+%% A Scheduler plans for one Owner and produces PlannedItems from Schedules.
+%% ---------------------------------------------------------------------------
+
+classDiagram
+    class Owner {
+        +String name
+        +List~Pet~ pets
+        +addPet(Pet pet) void
+        +removePet(Pet pet) void
+        +getAllTasks() List~Task~
+    }
+
+    class Pet {
+        +String name
+        +float weight
+        +String breed
+        +List~Task~ tasks
+        +editInfo(String name, float weight, String breed) void
+        +addTask(Task task) void
+    }
+
+    class Task {
+        +String name
+        +String type
+        +Pet pet
+        +int duration_minutes
+        +String priority
+        +List~Schedule~ schedules
+        +addSchedule(Schedule schedule) void
+        +is_done() bool
+        +occurrences_on(date day) List~Schedule~
+        +is_done_on(date day) bool
+    }
+
+    class Schedule {
+        +Task task
+        +Time time_of_day
+        +String recurrence
+        +bool completed
+        +date due_date
+        +bool time_is_auto
+        +next_due_date() date
+    }
+
+    class Scheduler {
+        +Owner owner
+        +get_all_tasks() List~Task~
+        +get_pending_tasks(date day) List~Task~
+        +filter_by_status(bool completed) List~Task~
+        +filter_by_pet(Pet pet) List~Task~
+        +mark_done(Schedule schedule, bool completed) void
+        +generate_occurrences(date through) int
+        -_extend_task(Task task, date through) int
+        -_all_occurrences() List~Schedule~
+        +sort_by_time() List~Schedule~
+        +sort_by_datetime() List~Schedule~
+        +occurrences_for_day(date day) List~Schedule~
+        +detect_conflicts(date day) List~String~
+        +build_day_plan(date day, Time day_start, Time day_end) List~PlannedItem~
+        +replan_day(date day, Time day_start, Time day_end) List~PlannedItem~
+        +explain_plan(date day) List~String~
+    }
+
+    class PlannedItem {
+        +Schedule schedule
+        +Time start
+        +Time end
+        +String reason
+        +bool anchored
+    }
+
+    Owner "1" --> "*" Pet : has
+    Pet "1" --> "*" Task : assigned
+    Task "1" --> "*" Schedule : scheduled at
+    Scheduler "1" --> "1" Owner : plans for
+    PlannedItem "1" --> "1" Schedule : wraps
+    Scheduler ..> PlannedItem : produces
