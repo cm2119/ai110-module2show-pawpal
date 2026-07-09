@@ -69,6 +69,13 @@ if owner.pets:
 else:
     st.info("No pets yet. Add one above.")
 
+# One Scheduler instance drives every read below (the tasks table and the
+# calendar), so the UI talks to a single layer. It must be created here, above
+# the tasks table, because that table now reads through it. `today` is defined
+# here too since the tasks table reports per-day completion (is_done_on).
+scheduler = Scheduler(owner=owner)
+today = date.today()
+
 st.markdown("### Tasks")
 st.caption("Add a few tasks. These attach to a pet and feed into your scheduler.")
 
@@ -91,7 +98,13 @@ else:
     with col_type:
         task_type = st.selectbox("Type", ["daily", "weekly", "once"])
     with col_time:
-        time_of_day = st.time_input("Time of day", value=time(8, 0))
+        # A flexible task has no owner-set time; the smart planner assigns one
+        # by priority. Ticking the box disables (and ignores) the time picker.
+        flexible_time = st.checkbox("Let PawPal choose the time")
+        picked_time = st.time_input(
+            "Time of day", value=time(8, 0), disabled=flexible_time
+        )
+    time_of_day = None if flexible_time else picked_time
 
     if st.button("Add task"):
         task = Task(
@@ -107,12 +120,14 @@ else:
             Schedule(task=task, time_of_day=time_of_day, recurrence=task_type)
         )
         selected_pet.add_task(task)
-        st.success(
-            f"Added '{task_title}' at {time_of_day.strftime('%H:%M')} "
-            f"to {selected_pet.name}."
+        when = (
+            "with no fixed time (PawPal will schedule it)"
+            if time_of_day is None
+            else f"at {time_of_day.strftime('%H:%M')}"
         )
+        st.success(f"Added '{task_title}' {when} to {selected_pet.name}.")
 
-    all_tasks = owner.get_all_tasks()
+    all_tasks = scheduler.get_all_tasks()
     if all_tasks:
         st.write("Current tasks:")
         st.table(
@@ -123,7 +138,7 @@ else:
                     "type": task.type,
                     "duration_minutes": task.duration_minutes,
                     "priority": task.priority,
-                    "completed": task.is_done,
+                    "done_today": task.is_done_on(today),
                 }
                 for task in all_tasks
             ]
@@ -135,8 +150,7 @@ st.divider()
 
 st.subheader("Schedule")
 
-scheduler = Scheduler(owner=owner)
-today = date.today()
+# scheduler and today are created once above the tasks table; reused here.
 horizon = today + timedelta(days=SCHEDULE_HORIZON_DAYS)
 
 # Materialize the recurring calendar up front. This is idempotent and runs on
@@ -148,6 +162,28 @@ all_occurrences = scheduler.sort_by_datetime()
 if not all_occurrences:
     st.info("No scheduled occurrences yet. Add a task with a time above.")
 else:
+    # Smart plan for today: order today's pending tasks by priority and assign
+    # a time to any the owner left flexible. This runs first because it writes
+    # times onto flexible occurrences — conflict detection and the checklist
+    # below both read those placed times.
+    st.markdown("### 🧠 Smart Plan for Today")
+    st.caption(
+        "Owner-set times are kept as fixed anchors; tasks with no time are "
+        "placed by priority (high first) into the earliest free slot. Once a "
+        "time is chosen it stays put — use *Re-plan day* to recompute from scratch."
+    )
+    # Re-plan is the escape hatch: build_day_plan is sticky (chosen times never
+    # move), so this button explicitly releases PawPal's auto-assigned times and
+    # rebuilds by current priority. Owner-set anchors are untouched.
+    if st.button("🔄 Re-plan day"):
+        scheduler.replan_day(today)
+    plan_lines = scheduler.explain_plan(today)
+    if plan_lines:
+        for line in plan_lines:
+            st.write(f"- {line}")
+    else:
+        st.caption("Nothing pending to plan for today.")
+
     # Warn about clashing occurrences for today (tasks whose time windows
     # overlap, or that start at the same time).
     for message in scheduler.detect_conflicts(today):
@@ -167,8 +203,17 @@ else:
         # reruns (occurrences persist in session_state), so two same-name tasks
         # at the same time — exactly the conflict case — don't collide.
         key = f"done::{id(occ)}"
-        done = st.checkbox(label, value=occ.completed, key=key)
-        scheduler.mark_done(occ, done)
+        # Write completion via on_change so it lands *before* the script reruns
+        # top-to-bottom. The tasks table above reads is_done_on(today), so the
+        # write must precede that read or the table lags one interaction behind.
+        st.checkbox(
+            label,
+            value=occ.completed,
+            key=key,
+            on_change=lambda occ=occ, key=key: scheduler.mark_done(
+                occ, st.session_state[key]
+            ),
+        )
 
     pending_today = scheduler.get_pending_tasks(today)
     st.caption(
@@ -177,15 +222,18 @@ else:
         else "All of today's tasks are done. 🎉"
     )
 
-    # Upcoming timeline through the horizon (read-only). all_occurrences is
-    # already in (date, time) order from sort_by_datetime(), so just window it.
+    # Upcoming timeline through the horizon (read-only). Re-sort here because
+    # the plan above just assigned times to today's flexible tasks. Future days
+    # stay flexible until their own plan runs, so those show "— (flexible)".
     st.markdown(f"**Upcoming — through {horizon}**")
-    upcoming = [s for s in all_occurrences if today <= s.due_date <= horizon]
+    upcoming = [
+        s for s in scheduler.sort_by_datetime() if today <= s.due_date <= horizon
+    ]
     st.table(
         [
             {
                 "date": s.due_date.isoformat(),
-                "time": s.time_of_day.strftime("%H:%M"),
+                "time": s.time_of_day.strftime("%H:%M") if s.time_of_day else "— (flexible)",
                 "pet": s.task.pet.name,
                 "task": s.task.name,
                 "recurrence": s.recurrence,

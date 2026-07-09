@@ -458,3 +458,240 @@ def test_occurrences_for_day_are_in_chronological_order():
     assert todays == [dawn, noon, evening]
     times = [o.time_of_day for o in todays]
     assert times == sorted(times)
+
+
+# --- Smart day plan (priority-aware ordering + explanations) ------------------
+
+DAY = date(2026, 7, 7)
+
+
+def _plan_setup():
+    owner = Owner(name="Cristina")
+    pet = Pet(name="Bella", weight=12.5)
+    owner.add_pet(pet)
+    return Scheduler(owner=owner), pet
+
+
+def _add(pet, name, *, priority="medium", duration=30, at=None,
+         recurrence="daily", day=DAY, completed=False):
+    """Attach a single-occurrence task; `at=None` leaves it flexible."""
+    task = Task(name=name, type=recurrence, pet=pet,
+                duration_minutes=duration, priority=priority)
+    task.add_schedule(
+        Schedule(task=task, time_of_day=at, recurrence=recurrence,
+                 due_date=day, completed=completed)
+    )
+    pet.add_task(task)
+    return task
+
+
+def test_plan_orders_flexible_tasks_by_priority():
+    """Tasks with no owner-set time are placed high→medium→low, packed by
+    duration from the day's start."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Low", priority="low", duration=30)
+    _add(pet, "High", priority="high", duration=30)
+    _add(pet, "Med", priority="medium", duration=30)
+
+    plan = scheduler.build_day_plan(DAY)
+
+    assert [it.schedule.task.name for it in plan] == ["High", "Med", "Low"]
+    starts = {it.schedule.task.name: it.start for it in plan}
+    assert starts == {"High": Time(8, 0), "Med": Time(8, 30), "Low": Time(9, 0)}
+    assert all(it.schedule.time_is_auto for it in plan)  # all auto-placed
+
+
+def test_plan_keeps_anchor_and_places_flexible_after_it():
+    """An owner-set time is a hard anchor the planner never moves; a flexible
+    task drops into the first free slot after it."""
+    scheduler, pet = _plan_setup()
+    walk = _add(pet, "Walk", priority="high", duration=30, at=Time(8, 0))
+    feed = _add(pet, "Feed", priority="medium", duration=15)  # flexible
+
+    plan = scheduler.build_day_plan(DAY)
+
+    walk_sched, feed_sched = walk.schedules[0], feed.schedules[0]
+    assert walk_sched.time_of_day == Time(8, 0)
+    assert walk_sched.time_is_auto is False  # anchor untouched
+    assert feed_sched.time_of_day == Time(8, 30)  # right after the walk
+    assert feed_sched.time_is_auto is True
+    feed_item = next(it for it in plan if it.schedule is feed_sched)
+    assert "after Bella's Walk (08:00–08:30)" in feed_item.reason
+
+
+def test_plan_places_overflow_task_and_flags_overbooked():
+    """A task with no room before day_end is still placed (never dropped) and
+    its reason says the day is overbooked."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Long", priority="high", duration=30)
+
+    plan = scheduler.build_day_plan(DAY, day_start=Time(8, 0), day_end=Time(8, 20))
+
+    assert len(plan) == 1
+    assert plan[0].start == Time(8, 0)  # placed, not dropped
+    assert "overbooked" in plan[0].reason
+
+
+def test_plan_is_repeatable_and_does_not_duplicate():
+    """Re-running the plan releases its own prior auto-placements first, so it
+    yields the same result and never adds occurrences."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Walk", priority="high", duration=30, at=Time(8, 0))
+    feed = _add(pet, "Feed", priority="medium", duration=15)
+
+    first = scheduler.build_day_plan(DAY)
+    second = scheduler.build_day_plan(DAY)
+
+    assert [it.start for it in first] == [it.start for it in second]
+    assert len(feed.schedules) == 1  # nothing duplicated
+
+
+def test_generation_stays_flexible_after_auto_placement():
+    """The recurrence generator treats an auto-placed slot as its original
+    flexible slot: it extends one series (not a bogus second one) and future
+    days stay flexible for their own plan to decide."""
+    scheduler, pet = _plan_setup()
+    feed = _add(pet, "Feed", priority="high", duration=15)  # flexible daily
+
+    scheduler.build_day_plan(DAY)  # places today at 08:00 (auto)
+    assert feed.schedules[0].time_of_day == Time(8, 0)
+    assert feed.schedules[0].time_is_auto is True
+
+    created = scheduler.generate_occurrences(DAY + timedelta(days=2))
+
+    assert created == 2  # +1 and +2 only — one series
+    assert len(feed.schedules) == 3
+    future = [s for s in feed.schedules if s.due_date > DAY]
+    assert all(s.time_of_day is None and not s.time_is_auto for s in future)
+
+
+def test_completing_a_task_does_not_shift_other_auto_times():
+    """Regression: an auto-assigned time is sticky. Completing an early task
+    must not slide the later auto-scheduled tasks backward (the bug where a
+    Streamlit rerun re-packed the whole day from scratch)."""
+    scheduler, pet = _plan_setup()
+    walk = _add(pet, "Walk", priority="high", duration=30)
+    play = _add(pet, "Play", priority="medium", duration=30)
+    brush = _add(pet, "Brush", priority="low", duration=30)
+
+    scheduler.build_day_plan(DAY)  # Walk 08:00, Play 08:30, Brush 09:00
+    assert play.schedules[0].time_of_day == Time(8, 30)
+    assert brush.schedules[0].time_of_day == Time(9, 0)
+
+    # Complete the earliest task, then re-plan (as a Streamlit rerun would).
+    scheduler.mark_done(walk.schedules[0])
+    plan = scheduler.build_day_plan(DAY)
+
+    # Walk drops off the plan; Play and Brush keep their original times.
+    assert [it.schedule.task.name for it in plan] == ["Play", "Brush"]
+    assert play.schedules[0].time_of_day == Time(8, 30)
+    assert brush.schedules[0].time_of_day == Time(9, 0)
+
+
+def test_new_flexible_task_routes_around_committed_slots():
+    """Once a slot is committed it is never preempted: a higher-priority task
+    added later takes the next free slot rather than displacing the earlier one."""
+    scheduler, pet = _plan_setup()
+    walk = _add(pet, "Walk", priority="low", duration=30)
+    scheduler.build_day_plan(DAY)  # Walk auto-committed at 08:00
+    assert walk.schedules[0].time_of_day == Time(8, 0)
+
+    urgent = _add(pet, "Urgent", priority="high", duration=30)
+    scheduler.build_day_plan(DAY)
+
+    assert walk.schedules[0].time_of_day == Time(8, 0)  # unchanged
+    assert urgent.schedules[0].time_of_day == Time(8, 30)  # routed after
+
+
+def test_replan_day_reshuffles_by_current_priority():
+    """The escape hatch: replan_day releases PawPal's own past choices and
+    rebuilds, so a higher-priority task added later can claim the best slot."""
+    scheduler, pet = _plan_setup()
+    walk = _add(pet, "Walk", priority="low", duration=30)
+    scheduler.build_day_plan(DAY)  # Walk auto-committed at 08:00
+    urgent = _add(pet, "Urgent", priority="high", duration=30)
+
+    # Sticky build keeps Walk at 08:00 and routes Urgent after it...
+    scheduler.build_day_plan(DAY)
+    assert urgent.schedules[0].time_of_day == Time(8, 30)
+
+    # ...but an explicit re-plan recomputes from scratch by priority.
+    scheduler.replan_day(DAY)
+    assert urgent.schedules[0].time_of_day == Time(8, 0)  # high goes first now
+    assert walk.schedules[0].time_of_day == Time(8, 30)
+
+
+def test_replan_day_keeps_owner_anchors():
+    """Re-planning only releases PawPal's auto-assigned times; owner-set anchors
+    are never moved."""
+    scheduler, pet = _plan_setup()
+    vet = _add(pet, "Vet", priority="high", duration=30, at=Time(9, 0))
+    scheduler.build_day_plan(DAY)
+
+    scheduler.replan_day(DAY)
+
+    assert vet.schedules[0].time_of_day == Time(9, 0)
+    assert vet.schedules[0].time_is_auto is False
+
+
+def test_completed_task_excluded_from_plan():
+    """The plan is the day's pending work; completed occurrences drop off."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Done", priority="high", duration=30, completed=True)
+    _add(pet, "Todo", priority="low", duration=30)
+
+    plan = scheduler.build_day_plan(DAY)
+
+    assert [it.schedule.task.name for it in plan] == ["Todo"]
+
+
+def test_flexible_occurrence_joins_timeline_only_after_planning():
+    """A flexible (untimed) occurrence is off the concrete timeline — invisible
+    to occurrences_for_day and detect_conflicts — until the plan places it."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Flex", priority="high", duration=30)
+
+    assert scheduler.occurrences_for_day(DAY) == []
+    assert scheduler.detect_conflicts(DAY) == []
+
+    scheduler.build_day_plan(DAY)
+
+    assert len(scheduler.occurrences_for_day(DAY)) == 1
+
+
+def test_sort_by_datetime_puts_flexible_last():
+    """Un-placed occurrences sort after every placed time within their day."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Timed", priority="low", duration=15, at=Time(9, 0))
+    flex = _add(pet, "Flex", priority="high", duration=15)
+
+    ordered = scheduler.sort_by_datetime()
+
+    assert ordered[0].task.name == "Timed"
+    assert ordered[-1] is flex.schedules[0]
+
+
+def test_anchor_reason_explains_owner_set_time():
+    """An anchored item's explanation names the owner-set time and priority."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Vet", priority="high", duration=30, at=Time(18, 0))
+
+    plan = scheduler.build_day_plan(DAY)
+
+    assert len(plan) == 1
+    assert "you set this time" in plan[0].reason
+    assert "18:00" in plan[0].reason
+    assert plan[0].anchored is True
+
+
+def test_explain_plan_returns_readable_lines():
+    """explain_plan renders one line per task with window, label, and reason."""
+    scheduler, pet = _plan_setup()
+    _add(pet, "Walk", priority="high", duration=30)  # flexible
+
+    lines = scheduler.explain_plan(DAY)
+
+    assert len(lines) == 1
+    assert "Bella: Walk (30 min)" in lines[0]
+    assert "08:00–08:30" in lines[0]
+    assert "start of the day" in lines[0]
