@@ -180,19 +180,41 @@ else:
     all_tasks = scheduler.get_all_tasks()
     if all_tasks:
         st.write("Current tasks:")
-        st.table(
-            [
-                {
-                    "pet": task.pet.name,
-                    "title": task.name,
-                    "type": task.type,
-                    "duration_minutes": task.duration_minutes,
-                    "priority": task.priority,
-                    "done_today": task.is_done_on(today),
-                }
-                for task in all_tasks
-            ]
-        )
+
+        # Filter the table by pet. Only worth offering once there's more than
+        # one pet; "All pets" keeps the full list, otherwise Scheduler
+        # .filter_by_pet narrows it to the chosen pet (matched by identity).
+        # This scopes only the table below — the remove control still sees every
+        # task via all_tasks.
+        displayed_tasks = all_tasks
+        if len(owner.pets) > 1:
+            filter_choice = st.selectbox(
+                "Filter tasks by pet",
+                ["All pets"] + [pet.name for pet in owner.pets],
+                key="task_filter_pet",
+            )
+            if filter_choice != "All pets":
+                chosen_pet = next(
+                    pet for pet in owner.pets if pet.name == filter_choice
+                )
+                displayed_tasks = scheduler.filter_by_pet(chosen_pet)
+
+        if displayed_tasks:
+            st.table(
+                [
+                    {
+                        "pet": task.pet.name,
+                        "title": task.name,
+                        "type": task.type,
+                        "duration_minutes": task.duration_minutes,
+                        "priority": task.priority,
+                        "done_today": task.is_done_on(today),
+                    }
+                    for task in displayed_tasks
+                ]
+            )
+        else:
+            st.info(f"No tasks for {filter_choice} yet.")
 
         # Remove a task: wires straight to Pet.remove_task. Options are indexes
         # into all_tasks (not names) so two same-named tasks stay distinct, and
